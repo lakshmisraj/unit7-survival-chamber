@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+<title>Unit-7 Survival Chamber</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: test-bay console. Chamber canvas on the left, the robot's vitals and reasoning on the right; stacks on phones. */
+:root {
+  --bg: #e6ebef; --panel: #f6f8fa; --fg: #17222c; --muted: #5a6875; --line: #c6d0d8;
+  --floor: #dbe2e8; --grid: #c9d3db; --ink: #1d2a35;
+  --robot: #f0b21a; --charge: #2d6bd3; --acid: #7a9620; --heat: #dd5d1c; --drone: #be2d48; --repair: #23946f;
+  --ok: #23946f; --warn: #c98a07; --crit: #be2d48;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151a; --panel: #161f26; --fg: #e2e8ed; --muted: #8a99a5; --line: #29353f;
+    --floor: #131b21; --grid: #1e2932; --ink: #0b1014;
+    --robot: #f4c13b; --charge: #5b95f0; --acid: #a2c03a; --heat: #ff7a35; --drone: #ee5571; --repair: #3cc495;
+    --ok: #3cc495; --warn: #f0b23a; --crit: #ee5571; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151a; --panel: #161f26; --fg: #e2e8ed; --muted: #8a99a5; --line: #29353f;
+  --floor: #131b21; --grid: #1e2932; --ink: #0b1014;
+  --robot: #f4c13b; --charge: #5b95f0; --acid: #a2c03a; --heat: #ff7a35; --drone: #ee5571; --repair: #3cc495;
+  --ok: #3cc495; --warn: #f0b23a; --crit: #ee5571; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-block: 20px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.brand { min-width: 0; }
+h1 { font-family: var(--display); font-weight: 800; font-size: clamp(32px, 5vw, 48px); line-height: .95; margin: 0; letter-spacing: .01em; text-transform: uppercase; text-wrap: balance; }
+h1 span { color: var(--robot); -webkit-text-stroke: 1px var(--fg); }
+.sub { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
+.readouts { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ro { display: grid; gap: 2px; }
+.ro small { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-family: var(--body); font-weight: 600; }
+.ro b { font-size: 18px; font-weight: 500; }
+.pill { font-family: var(--body); font-weight: 600; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; padding: 6px 10px; border-radius: 3px; border: 1.5px solid currentColor; display: inline-flex; gap: 7px; align-items: center; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.crit { color: var(--crit); }
+
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+@media (max-width: 960px) { .main { grid-template-columns: minmax(0, 1fr); } }
+
+.stage { display: grid; gap: 10px; min-width: 0; }
+.chamber { position: relative; border: 2px solid var(--fg); background: var(--floor); }
+.chamber::before, .chamber::after { content: ""; position: absolute; left: 0; right: 0; height: 8px; z-index: 1; pointer-events: none;
+  background: repeating-linear-gradient(-45deg, var(--robot) 0 10px, var(--fg) 10px 20px); }
+.chamber::before { top: -10px; } .chamber::after { bottom: -10px; }
+canvas { display: block; width: 100%; height: auto; aspect-ratio: 900 / 560; max-width: 100%; cursor: crosshair; touch-action: manipulation; }
+.offline { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); z-index: 2; }
+.offline-card { text-align: center; display: grid; gap: 6px; padding: 18px 22px; background: var(--panel); border: 2px solid var(--crit); max-width: 86%; }
+.offline-card h2 { margin: 0; font-family: var(--display); font-size: 34px; color: var(--crit); letter-spacing: .04em; text-transform: uppercase; }
+.offline-card p { margin: 0; color: var(--muted); }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-top: 8px; }
+.toolbar .lbl { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1.5px solid var(--line); border-radius: 4px; overflow: hidden; background: var(--panel); }
+.seg button { font: 500 13px var(--body); color: var(--fg); background: none; border: 0; padding: 7px 11px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; border-right: 1px solid var(--line); }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--panel); }
+.seg button:focus-visible, .btn:focus-visible, .switch:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--charge); outline-offset: 2px; }
+.sw { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 0; }
+
+aside { display: grid; gap: 14px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); padding: 14px; display: grid; gap: 10px; }
+.card h3 { margin: 0; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; }
+.meter { display: grid; grid-template-columns: 74px minmax(0,1fr) 58px; align-items: center; gap: 10px; }
+.meter span:first-child { font-weight: 500; }
+.meter .val { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.bar { height: 10px; background: var(--floor); border: 1px solid var(--line); position: relative; overflow: hidden; }
+.bar i { position: absolute; inset: 0 auto 0 0; background: var(--ok); transition: width .15s linear, background .3s; }
+.bar.ticks::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), var(--panel) calc(10% - 1px) 10%); }
+.foot { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.directive { font-family: var(--display); font-size: 30px; font-weight: 800; line-height: 1; letter-spacing: .03em; text-transform: uppercase; }
+.reason { margin: 0; min-height: 2.9em; }
+.drives { display: grid; gap: 5px; }
+.drive { display: grid; grid-template-columns: 62px minmax(0,1fr) 34px; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.drive .bar { height: 6px; }
+.drive.on { color: var(--fg); font-weight: 600; }
+.drive .n { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+
+.log { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: grid; gap: 0; font-size: 12.5px; }
+.log li { display: grid; grid-template-columns: 50px minmax(0,1fr); gap: 8px; padding: 5px 0; border-top: 1px dashed var(--line); }
+.log li:first-child { border-top: 0; }
+.log time { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.log .crit { color: var(--crit); font-weight: 600; } .log .warn { color: var(--warn); } .log .good { color: var(--ok); }
+
+.controls { display: grid; gap: 12px; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.switch { appearance: none; width: 42px; height: 24px; border-radius: 12px; background: var(--line); position: relative; cursor: pointer; transition: background .2s; flex: none; margin: 0; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--panel); transition: transform .2s; }
+.switch:checked { background: var(--ok); } .switch:checked::after { transform: translateX(18px); }
+input[type=range] { width: 150px; accent-color: var(--fg); }
+.btn { font: 600 13px var(--body); padding: 8px 12px; background: var(--fg); color: var(--panel); border: 0; border-radius: 4px; cursor: pointer; }
+.btn.ghost { background: none; color: var(--fg); border: 1.5px solid var(--line); }
+.small { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .bar i, .switch, .switch::after { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>Unit-<span>7</span> Survival Chamber</h1>
+      <p class="sub">Unit-7 has one goal: stay operational. It watches its battery, hull and core temperature, weighs every threat, and picks whatever keeps it alive longest. Drop hazards into the chamber and see how it copes.</p>
+    </div>
+    <div class="readouts">
+      <span id="status" class="pill ok">Operational</span>
+      <div class="ro"><small>Uptime</small><b id="uptime">00:00</b></div>
+      <div class="ro"><small>Best run</small><b id="best">00:00</b></div>
+      <div class="ro"><small>Reboots</small><b id="deaths">0</b></div>
+    </div>
+  </header>
+
+  <div class="main">
+    <section class="stage">
+      <div class="chamber">
+        <canvas id="cv" width="900" height="560" aria-label="Test chamber with Unit-7 and hazards. Click to place the selected item."></canvas>
+        <div class="offline" id="offline" hidden>
+          <div class="offline-card">
+            <h2>Offline</h2>
+            <p id="offlineWhy">Battery depleted</p>
+            <p class="foot" id="offlineTime"></p>
+            <div><button class="btn" id="reboot">Reboot Unit-7</button></div>
+            <p class="small">Reboots automatically in <span id="rebootIn">4</span>s</p>
+          </div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <span class="lbl">Place</span>
+        <div class="seg" id="tools" role="group" aria-label="Item to place">
+          <button data-tool="drone" aria-pressed="true"><i class="sw" style="background:var(--drone)"></i>Drone</button>
+          <button data-tool="acid" aria-pressed="false"><i class="sw" style="background:var(--acid)"></i>Acid pool</button>
+          <button data-tool="vent" aria-pressed="false"><i class="sw" style="background:var(--heat)"></i>Heat vent</button>
+          <button data-tool="charger" aria-pressed="false"><i class="sw" style="background:var(--charge)"></i>Charger</button>
+          <button data-tool="kit" aria-pressed="false"><i class="sw" style="background:var(--repair)"></i>Repair kit</button>
+          <button data-tool="erase" aria-pressed="false">Remove</button>
+        </div>
+      </div>
+      <p class="hint">Click or tap the chamber to place the selected item. Drones hunt Unit-7 for a few seconds when it comes within range, then lose interest.</p>
+    </section>
+
+    <aside>
+      <div class="card">
+        <h3>Vitals <span id="docked"></span></h3>
+        <div class="meter"><span>Battery</span><div class="bar ticks"><i id="mBatt"></i></div><span class="val" id="vBatt">0%</span></div>
+        <div class="meter"><span>Hull</span><div class="bar ticks"><i id="mHull"></i></div><span class="val" id="vHull">0%</span></div>
+        <div class="meter"><span>Core temp</span><div class="bar"><i id="mTemp"></i></div><span class="val" id="vTemp">0°C</span></div>
+        <div class="foot" id="endurance">Endurance —</div>
+      </div>
+
+      <div class="card">
+        <h3>Current directive</h3>
+        <div class="directive" id="dir">Explore</div>
+        <p class="reason" id="reason">Booting.</p>
+        <div class="drives" id="drives"></div>
+      </div>
+
+      <div class="card controls">
+        <h3>Instincts</h3>
+        <div class="row">
+          <label for="instinct"><b>Self-preservation</b><br><span class="small">Off: it ignores hazards and never recharges</span></label>
+          <input type="checkbox" class="switch" id="instinct" checked>
+        </div>
+        <div class="row">
+          <label for="caution"><b>Caution</b><br><span class="small" id="cautionLbl">Balanced</span></label>
+          <input type="range" id="caution" min="0.5" max="2" step="0.05" value="1">
+        </div>
+        <div class="row">
+          <span><b>Sim speed</b></span>
+          <div class="seg" id="speeds" role="group" aria-label="Simulation speed">
+            <button data-speed="1" aria-pressed="true">1×</button>
+            <button data-speed="2" aria-pressed="false">2×</button>
+            <button data-speed="4" aria-pressed="false">4×</button>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn ghost" id="reset">Reset chamber</button>
+          <button class="btn ghost" id="clear">Clear hazards</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Decision log <span id="logCount"></span></h3>
+        <ul class="log" id="log"></ul>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+const W = 900, H = 560, VMAX = 115, R_ROBOT = 15;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rnd = (a, b) => a + Math.random() * (b - a);
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const fmt = s => { s = Math.max(0, Math.floor(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+
+/* ---------- theme colors for canvas ---------- */
+let C = {};
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  ['floor','grid','ink','fg','muted','robot','charge','acid','heat','drone','repair','ok','warn','crit','panel','line']
+    .forEach(k => C[k] = cs.getPropertyValue('--' + k).trim());
+}
+readColors();
+try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors); } catch (e) {}
+new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+/* ---------- canvas sizing ---------- */
+function sizeCanvas() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+sizeCanvas();
+window.addEventListener('resize', sizeCanvas);
+
+/* ---------- state ---------- */
+const S = { t: 0, alive: true, deaths: 0, best: 0, instinct: true, caution: 1, speed: 1, tool: 'drone',
+  acid: [], vents: [], drones: [], chargers: [], kits: [], log: [], drives: {}, offlineT: 0 };
+try { S.best = +localStorage.getItem('unit7-best') || 0; } catch (e) {}
+
+function newRobot() {
+  return { x: 450, y: 110, vx: 0, vy: 0, heading: Math.PI / 2, battery: 72, hull: 88, temp: 26,
+    dir: 'EXPLORE', reason: 'Booting.', target: null, wp: null, thinkT: 0, side: 1, charging: false,
+    lastHit: 0, cause: '', born: 0 };
+}
+function newDrone(x, y) { return { x, y, ang: rnd(0, 6.28), chase: 0, cool: rnd(0, 2), hunting: false, spin: 0 }; }
+
+function seed() {
+  S.acid = [{ x: 455, y: 300, r: 58 }, { x: 240, y: 420, r: 44 }, { x: 650, y: 160, r: 40 }];
+  S.vents = [{ x: 720, y: 360, r: 85 }];
+  S.chargers = [{ x: 80, y: 80 }, { x: 820, y: 490 }];
+  S.drones = [newDrone(280, 170), newDrone(600, 470)];
+  S.kits = [];
+  spawnKit();
+}
+function spawnKit() {
+  let best = null, bestScore = -1;
+  for (let i = 0; i < 40; i++) {
+    const p = { x: rnd(50, W - 50), y: rnd(50, H - 50) };
+    let s = 1000;
+    for (const a of S.acid) s = Math.min(s, dist(p, a) - a.r);
+    for (const v of S.vents) s = Math.min(s, dist(p, v) - v.r * .7);
+    for (const c of S.chargers) s = Math.min(s, dist(p, c) - 40);
+    if (s > bestScore) { bestScore = s; best = p; }
+  }
+  if (best) S.kits.push({ x: best.x, y: best.y, ph: rnd(0, 6) });
+}
+
+let R = newRobot();
+seed();
+
+/* ---------- log ---------- */
+function addLog(text, kind = '') {
+  S.log.unshift({ t: S.t - R.born, text, kind });
+  if (S.log.length > 60) S.log.pop();
+  renderLog();
+}
+function renderLog() {
+  const ul = $('log');
+  ul.innerHTML = '';
+  for (const e of S.log.slice(0, 40)) {
+    const li = document.createElement('li');
+    const tm = document.createElement('time'); tm.textContent = fmt(e.t);
+    const sp = document.createElement('span'); sp.textContent = e.text; if (e.kind) sp.className = e.kind;
+    li.append(tm, sp); ul.append(li);
+  }
+  $('logCount').textContent = S.log.length ? S.log.length + ' entries' : '';
+}
+
+/* ---------- perception ---------- */
+function drainRate() { const sp = Math.hypot(R.vx, R.vy) / VMAX; return 0.8 + 1.6 * sp; }
+function routeCost(p) {
+  // straight-line distance plus penalties for hazards along the way
+  let cost = dist(R, p);
+  const n = 14;
+  for (let i = 1; i <= n; i++) {
+    const q = { x: R.x + (p.x - R.x) * i / n, y: R.y + (p.y - R.y) * i / n };
+    for (const a of S.acid) if (dist(q, a) < a.r + 22) cost += 60;
+    for (const v of S.vents) if (dist(q, v) < v.r * .8) cost += 20;
+    for (const d of S.drones) if (dist(q, d) < 70) cost += 25;
+  }
+  return cost;
+}
+function riskAt(p) {
+  let r = 0;
+  for (const a of S.acid) { const e = dist(p, a) - a.r; if (e < 70) r += (70 - Math.max(e, 0)) / 70 * 2; }
+  for (const v of S.vents) { const d = dist(p, v); if (d < v.r * 1.3) r += (1 - d / (v.r * 1.3)); }
+  for (const d of S.drones) { const e = dist(p, d); if (e < 220) r += (220 - e) / 220 * 1.5; }
+  const edge = Math.min(p.x, p.y, W - p.x, H - p.y); if (edge < 50) r += (50 - edge) / 50;
+  return r;
+}
+function safeSpot(scoreFn) {
+  let best = null, bs = Infinity;
+  for (let i = 0; i < 36; i++) {
+    const p = { x: rnd(50, W - 50), y: rnd(50, H - 50) };
+    const s = scoreFn(p);
+    if (s < bs) { bs = s; best = p; }
+  }
+  return best;
+}
+
+/* ---------- decision making ---------- */
+const LABELS = { EVADE: 'Evade', CHARGE: 'Recharge', REPAIR: 'Repair', COOL: 'Cool down', EXPLORE: 'Explore', DOCKED: 'Charging', WANDER: 'Wander' };
+const DRIVE_KEYS = ['EVADE', 'CHARGE', 'REPAIR', 'COOL', 'EXPLORE'];
+
+function think() {
+  const prev = R.dir;
+  if (!S.instinct) {
+    S.drives = { EVADE: 0, CHARGE: 0, REPAIR: 0, COOL: 0, EXPLORE: 1 };
+    if (!R.wp || dist(R, R.wp) < 25) R.wp = { x: rnd(40, W - 40), y: rnd(40, H - 40) };
+    R.target = R.wp; R.dir = 'WANDER';
+    R.reason = 'Self-preservation is off. It walks straight through hazards and never looks for a charger.';
+    if (prev !== R.dir) addLog('Instinct disabled. Wandering blind.', 'warn');
+    return;
+  }
+  const cau = S.caution;
+  // nearest hunting drone
+  let dn = Infinity, nd = null;
+  for (const d of S.drones) { const e = dist(R, d); if (e < dn) { dn = e; nd = d; } }
+  const evadeRange = 110 + 60 * cau;
+  const evade = nd && dn < evadeRange ? (1 - dn / evadeRange) * (1.3 + .5 * cau) * (nd.hunting ? 1.25 : .8) : 0;
+
+  // charger
+  let ch = null, chCost = Infinity;
+  for (const c of S.chargers) { const k = routeCost(c); if (k < chCost) { chCost = k; ch = c; } }
+  const drain = Math.max(1.4, drainRate());
+  const endurance = R.battery / drain;
+  const eta = ch ? chCost / (VMAX * .85) : Infinity;
+  let charge = 0;
+  if (ch) {
+    charge = clamp((62 - R.battery) / 40, 0, 1.3);
+    if (endurance < eta * 1.6 + 6) charge += .7;
+    if (R.charging && R.battery < 96) charge = Math.max(charge, 1.15);
+  }
+  // repair
+  let kit = null, kCost = Infinity;
+  for (const k of S.kits) { const c = routeCost(k); if (c < kCost) { kCost = c; kit = k; } }
+  const repair = kit ? clamp((85 - R.hull) / 45, 0, 1.25) : 0;
+  // cooling
+  const cool = R.temp > 55 ? clamp((R.temp - 55) / 30, 0, 1.4) : 0;
+  const explore = .2;
+
+  S.drives = { EVADE: evade, CHARGE: charge, REPAIR: repair, COOL: cool, EXPLORE: explore };
+  let pick = 'EXPLORE', ps = -1;
+  for (const k of DRIVE_KEYS) if (S.drives[k] > ps) { ps = S.drives[k]; pick = k; }
+  // hysteresis: stay on current plan unless a new one is clearly better (evading always wins quickly)
+  const cur = prev === 'DOCKED' ? 'CHARGE' : prev;
+  if (pick !== cur && pick !== 'EVADE' && S.drives[cur] !== undefined && S.drives[cur] > ps - .12) pick = cur;
+
+  const b = Math.round(R.battery), h = Math.round(R.hull), tc = Math.round(R.temp);
+  switch (pick) {
+    case 'EVADE': {
+      const ax = (R.x - nd.x) / (dn || 1), ay = (R.y - nd.y) / (dn || 1);
+      const away = { x: clamp(R.x + ax * 170, 40, W - 40), y: clamp(R.y + ay * 170, 40, H - 40) };
+      // if cornered, pick the low-risk spot that is far from the drone
+      R.target = dist(away, R) < 60 ? safeSpot(p => riskAt(p) - dist(p, nd) / 120) : away;
+      R.dir = 'EVADE';
+      R.reason = `Drone ${Math.round(dn)} px away${nd.hunting ? ' and hunting' : ''}. Moving away at full speed.`;
+      break;
+    }
+    case 'CHARGE':
+      R.target = ch;
+      if (R.charging) { R.dir = 'DOCKED'; R.reason = `Docked at ${b}%. Holding still until 96% before leaving.`; }
+      else { R.dir = 'CHARGE'; R.reason = `Battery ${b}%, about ${Math.round(endurance)} s of power left. Charger is ${Math.round(eta)} s away by the safest route.`; }
+      break;
+    case 'REPAIR':
+      R.target = kit; R.dir = 'REPAIR';
+      R.reason = `Hull at ${h}%. Repair kit ${Math.round(dist(R, kit))} px away, route cost ${Math.round(kCost)}.`;
+      break;
+    case 'COOL':
+      R.target = safeSpot(p => { let s = riskAt(p) * 2 + dist(R, p) / 400; for (const v of S.vents) s -= Math.min(dist(p, v), 300) / 60; return s; });
+      R.dir = 'COOL';
+      R.reason = `Core at ${tc}°C. Overheat damage starts at 85°C, so it is leaving the vent's heat.`;
+      break;
+    default:
+      if (!R.wp || dist(R, R.wp) < 30 || riskAt(R.wp) > 1.2) R.wp = safeSpot(p => riskAt(p) + dist(R, p) / 900 + Math.random() * .3);
+      R.target = R.wp; R.dir = 'EXPLORE';
+      R.reason = 'Vitals stable. Patrolling low-risk ground at 55% speed to save power.';
+  }
+  if (R.dir !== prev) {
+    const kind = R.dir === 'EVADE' ? 'warn' : R.dir === 'DOCKED' ? 'good' : '';
+    const why = { EVADE: `drone at ${Math.round(dn)} px`, CHARGE: `battery ${b}%`, DOCKED: `charging from ${b}%`, REPAIR: `hull ${h}%`, COOL: `core ${tc}°C`, EXPLORE: 'all vitals in range' }[R.dir];
+    addLog(`${LABELS[R.dir]}: ${why}`, kind);
+  }
+}
+
+/* ---------- steering ---------- */
+function avoidance() {
+  let ax = 0, ay = 0;
+  const cau = S.caution;
+  for (const a of S.acid) {
+    const d = dist(R, a) || 1, edge = d - a.r - R_ROBOT, m = 40 * cau + 10;
+    if (edge < m) { const f = Math.pow((m - Math.max(edge, -a.r)) / m, 2) * 2.4; ax += (R.x - a.x) / d * f; ay += (R.y - a.y) / d * f; }
+  }
+  const ventMind = R.temp > 40 || R.dir === 'COOL';
+  for (const v of S.vents) {
+    const d = dist(R, v) || 1, m = v.r * (ventMind ? 1 : .55);
+    if (d < m) { const f = (1 - d / m) * 1.3; ax += (R.x - v.x) / d * f; ay += (R.y - v.y) / d * f; }
+  }
+  for (const dr of S.drones) {
+    const d = dist(R, dr) || 1, m = 90 + 70 * cau;
+    if (d < m) { const f = Math.pow(1 - d / m, 1.5) * 2.2; ax += (R.x - dr.x) / d * f; ay += (R.y - dr.y) / d * f; }
+  }
+  const wm = 34;
+  if (R.x < wm) ax += (wm - R.x) / wm; if (R.x > W - wm) ax -= (R.x - (W - wm)) / wm;
+  if (R.y < wm) ay += (wm - R.y) / wm; if (R.y > H - wm) ay -= (R.y - (H - wm)) / wm;
+  return { x: ax, y: ay };
+}
+
+function updateRobot(dt) {
+  R.thinkT -= dt;
+  if (R.thinkT <= 0) { think(); R.thinkT = .25; }
+  let dx = 0, dy = 0, d = 0;
+  if (R.target) { dx = R.target.x - R.x; dy = R.target.y - R.y; d = Math.hypot(dx, dy); }
+  let speed = { EVADE: 1, CHARGE: .9, REPAIR: .85, COOL: .8, EXPLORE: .55, DOCKED: 0, WANDER: .7 }[R.dir] * VMAX;
+  if ((R.dir === 'CHARGE' || R.dir === 'REPAIR') && d < 60) speed *= Math.max(.15, d / 60);
+  if (R.dir === 'CHARGE' && d < 8) speed = 0;
+  let ux = d > 1 ? dx / d : 0, uy = d > 1 ? dy / d : 0;
+  if (S.instinct) {
+    const av = avoidance();
+    const mag = Math.hypot(av.x, av.y);
+    // slide around obstacles instead of stalling against them
+    if (mag > .05 && ux * av.x + uy * av.y < -.15 * mag) {
+      const px = -av.y / mag, py = av.x / mag;
+      if (px * ux + py * uy < 0 && Math.random() < .02) R.side *= -1;
+      ux += px * mag * .9 * R.side; uy += py * mag * .9 * R.side;
+    }
+    ux += av.x; uy += av.y;
+    if (R.dir === 'DOCKED') { ux = dx / 10; uy = dy / 10; speed = 25; }
+    else if (speed < 1 && mag > .3) speed = VMAX * .6;
+  } else {
+    if (R.x < 30) ux += 1; if (R.x > W - 30) ux -= 1; if (R.y < 30) uy += 1; if (R.y > H - 30) uy -= 1;
+  }
+  const um = Math.hypot(ux, uy);
+  const tx = um > 1e-3 ? ux / um * speed : 0, ty = um > 1e-3 ? uy / um * speed : 0;
+  const k = Math.min(1, dt * 5);
+  R.vx += (tx - R.vx) * k; R.vy += (ty - R.vy) * k;
+  R.x = clamp(R.x + R.vx * dt, R_ROBOT, W - R_ROBOT);
+  R.y = clamp(R.y + R.vy * dt, R_ROBOT, H - R_ROBOT);
+  const sp = Math.hypot(R.vx, R.vy);
+  if (sp > 6) { let da = Math.atan2(R.vy, R.vx) - R.heading; da = Math.atan2(Math.sin(da), Math.cos(da)); R.heading += da * Math.min(1, dt * 8); }
+
+  /* vitals */
+  const wasCharging = R.charging;
+  R.charging = S.chargers.some(c => dist(c, R) < 24);
+  if (R.charging) R.battery = Math.min(100, R.battery + 16 * dt);
+  if (R.charging && !wasCharging) addLog('Contact with charger.', 'good');
+  R.battery -= drainRate() * dt;
+
+  let heat = 0;
+  for (const v of S.vents) { const dv = dist(R, v); if (dv < v.r) heat += 46 * (1 - dv / v.r); }
+  R.temp += (heat + 2.2 * sp / VMAX - (R.temp - 24) * .14) * dt;
+
+  let hit = '';
+  for (const a of S.acid) if (dist(R, a) < a.r) { R.hull -= 20 * dt; hit = 'Dissolved in acid'; }
+  for (const dr of S.drones) {
+    const e = dist(R, dr);
+    if (e < 26) { R.hull -= 32 * dt; hit = 'Destroyed by drone'; const f = (26 - e) / (e || 1); R.x += (R.x - dr.x) * f * .5; R.y += (R.y - dr.y) * f * .5; }
+  }
+  if (R.temp > 85) { R.hull -= (R.temp - 85) * .45 * dt; hit = hit || 'Core overheated'; }
+  if (hit) { R.cause = hit; if (S.t - R.lastHit > 2.5) { addLog({ 'Dissolved in acid': 'Hull damage: acid contact', 'Destroyed by drone': 'Hull damage: drone collision', 'Core overheated': 'Hull damage: core above 85°C' }[hit], 'crit'); } R.lastHit = S.t; }
+
+  for (let i = S.kits.length - 1; i >= 0; i--) {
+    if (dist(R, S.kits[i]) < 22) {
+      const before = R.hull; R.hull = Math.min(100, R.hull + 40);
+      addLog(`Repair kit used. Hull ${Math.round(before)}% → ${Math.round(R.hull)}%`, 'good');
+      S.kits.splice(i, 1); setTimeout(() => { if (S.kits.length < 3) spawnKit(); }, 9000);
+    }
+  }
+  R.battery = clamp(R.battery, 0, 100); R.hull = clamp(R.hull, 0, 100);
+  if (R.battery <= 0) die('Battery depleted');
+  else if (R.hull <= 0) die(R.cause || 'Hull failure');
+}
+
+function updateDrones(dt) {
+  for (const d of S.drones) {
+    d.spin += dt * 20;
+    d.cool -= dt;
+    const e = dist(d, R);
+    const sees = S.alive && e < 175 && d.cool <= 0;
+    if (sees) {
+      if (!d.hunting) d.chase = 0;
+      d.hunting = true; d.chase += dt;
+      const want = Math.atan2(R.y - d.y, R.x - d.x);
+      let da = Math.atan2(Math.sin(want - d.ang), Math.cos(want - d.ang));
+      d.ang += da * Math.min(1, dt * 4);
+      if (d.chase > 4.5) { d.hunting = false; d.cool = 3.5; }
+    } else {
+      d.hunting = false;
+      d.ang += rnd(-1, 1) * dt * 2.4;
+    }
+    const sp = d.hunting ? 82 : 44;
+    d.x += Math.cos(d.ang) * sp * dt; d.y += Math.sin(d.ang) * sp * dt;
+    if (d.x < 16 || d.x > W - 16) { d.ang = Math.PI - d.ang; d.x = clamp(d.x, 16, W - 16); }
+    if (d.y < 16 || d.y > H - 16) { d.ang = -d.ang; d.y = clamp(d.y, 16, H - 16); }
+  }
+}
+
+function die(cause) {
+  S.alive = false; S.deaths++; S.offlineT = 4;
+  const up = S.t - R.born;
+  if (up > S.best) { S.best = up; try { localStorage.setItem('unit7-best', String(up)); } catch (e) {} }
+  addLog(`OFFLINE. ${cause} after ${fmt(up)}.`, 'crit');
+  $('offlineWhy').textContent = cause + '.';
+  $('offlineTime').textContent = 'Survived ' + fmt(up);
+  $('offline').hidden = false;
+  R.vx = R.vy = 0;
+}
+function reboot() {
+  R = newRobot(); R.born = S.t; S.alive = true;
+  R.x = S.chargers[0] ? clamp(S.chargers[0].x + 60, 40, W - 40) : 450;
+  R.y = S.chargers[0] ? clamp(S.chargers[0].y + 60, 40, H - 40) : 110;
+  $('offline').hidden = true;
+  addLog('Reboot complete. Self-checks passed.', 'good');
+}
+
+/* ---------- drawing ---------- */
+let pointer = null;
+function draw() {
+  const t = S.t;
+  ctx.fillStyle = C.floor; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.beginPath();
+  for (let x = 40; x < W; x += 40) { ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, H); }
+  for (let y = 40; y < H; y += 40) { ctx.moveTo(0, y + .5); ctx.lineTo(W, y + .5); }
+  ctx.stroke();
+  ctx.fillStyle = C.muted; ctx.font = '10px "IBM Plex Mono", monospace'; ctx.globalAlpha = .7;
+  for (let x = 0; x <= W; x += 200) ctx.fillText(x + 'px', x + 4, H - 6);
+  ctx.globalAlpha = 1;
+
+  // heat vents
+  for (const v of S.vents) {
+    const pulse = .85 + .15 * Math.sin(t * 3 + v.x);
+    const g = ctx.createRadialGradient(v.x, v.y, 4, v.x, v.y, v.r);
+    g.addColorStop(0, hexA(C.heat, .55 * pulse)); g.addColorStop(1, hexA(C.heat, 0));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(v.x, v.y, v.r, 0, 7); ctx.fill();
+    ctx.strokeStyle = C.heat; ctx.lineWidth = 2; ctx.fillStyle = C.ink;
+    ctx.fillRect(v.x - 13, v.y - 13, 26, 26);
+    ctx.strokeStyle = C.heat; ctx.beginPath();
+    for (let i = -8; i <= 8; i += 5.3) { ctx.moveTo(v.x - 9, v.y + i); ctx.lineTo(v.x + 9, v.y + i); }
+    ctx.stroke();
+  }
+  // acid
+  for (const a of S.acid) {
+    ctx.beginPath();
+    for (let i = 0; i <= 28; i++) {
+      const ang = i / 28 * Math.PI * 2;
+      const rr = a.r * (1 + .06 * Math.sin(ang * 3 + t * 1.3 + a.x) + .04 * Math.sin(ang * 5 - t * .9));
+      const px = a.x + Math.cos(ang) * rr, py = a.y + Math.sin(ang) * rr;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath(); ctx.fillStyle = hexA(C.acid, .38); ctx.fill();
+    ctx.strokeStyle = C.acid; ctx.lineWidth = 2; ctx.stroke();
+    for (let i = 0; i < 3; i++) {
+      const bt = (t * .6 + i / 3 + a.y * .01) % 1;
+      ctx.beginPath(); ctx.arc(a.x + Math.sin(i * 2.1 + a.x) * a.r * .45, a.y + Math.cos(i * 1.7) * a.r * .4, 2 + bt * 4, 0, 7);
+      ctx.strokeStyle = hexA(C.acid, 1 - bt); ctx.lineWidth = 1.5; ctx.stroke();
+    }
+  }
+  // chargers
+  for (const c of S.chargers) {
+    const docked = S.alive && R.charging && dist(c, R) < 24;
+    if (docked) { ctx.fillStyle = hexA(C.charge, .18 + .1 * Math.sin(t * 6)); ctx.beginPath(); ctx.arc(c.x, c.y, 38, 0, 7); ctx.fill(); }
+    ctx.fillStyle = hexA(C.charge, .16); ctx.strokeStyle = C.charge; ctx.lineWidth = 2;
+    rr(c.x - 22, c.y - 22, 44, 44, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = C.charge; ctx.beginPath();
+    ctx.moveTo(c.x + 3, c.y - 13); ctx.lineTo(c.x - 7, c.y + 2); ctx.lineTo(c.x - 1, c.y + 2);
+    ctx.lineTo(c.x - 4, c.y + 13); ctx.lineTo(c.x + 7, c.y - 3); ctx.lineTo(c.x + 1, c.y - 3); ctx.closePath(); ctx.fill();
+  }
+  // kits
+  for (const k of S.kits) {
+    const by = Math.sin(t * 3 + k.ph) * 2;
+    ctx.fillStyle = C.repair; rr(k.x - 11, k.y - 11 + by, 22, 22, 4); ctx.fill();
+    ctx.fillStyle = C.panel; ctx.fillRect(k.x - 2.5, k.y - 7 + by, 5, 14); ctx.fillRect(k.x - 7, k.y - 2.5 + by, 14, 5);
+  }
+  // robot planning line
+  if (S.alive && R.target && S.instinct !== null) {
+    ctx.setLineDash([5, 6]); ctx.strokeStyle = hexA(C.fg, .45); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(R.x, R.y); ctx.lineTo(R.target.x, R.target.y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = hexA(C.fg, .5); ctx.beginPath(); ctx.arc(R.target.x, R.target.y, 6, 0, 7); ctx.stroke();
+  }
+  // drones
+  for (const d of S.drones) {
+    if (d.hunting) {
+      ctx.strokeStyle = hexA(C.drone, .35); ctx.setLineDash([3, 5]); ctx.beginPath(); ctx.arc(d.x, d.y, 175, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.ang);
+    ctx.strokeStyle = C.drone; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(-10, -10); ctx.lineTo(10, 10); ctx.moveTo(10, -10); ctx.lineTo(-10, 10); ctx.stroke();
+    for (const [rx, ry] of [[-10, -10], [10, -10], [10, 10], [-10, 10]]) {
+      ctx.beginPath(); ctx.ellipse(rx, ry, 6, 2, d.spin + rx, 0, 7); ctx.fillStyle = hexA(C.drone, .55); ctx.fill();
+    }
+    ctx.fillStyle = C.drone; ctx.beginPath(); ctx.arc(0, 0, 7, 0, 7); ctx.fill();
+    ctx.fillStyle = d.hunting ? C.panel : C.ink; ctx.beginPath(); ctx.arc(4, 0, 2.5, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  // robot
+  drawRobot();
+  // ghost
+  if (pointer && S.tool) drawGhost(pointer.x, pointer.y);
+}
+
+function drawRobot() {
+  const crit = R.battery < 20 || R.hull < 25 || R.temp > 80;
+  // sensor ring
+  if (S.alive && S.instinct) { ctx.strokeStyle = hexA(C.fg, .12); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(R.x, R.y, 90 + 70 * S.caution, 0, 7); ctx.stroke(); }
+  ctx.save(); ctx.translate(R.x, R.y); ctx.rotate(R.heading);
+  ctx.fillStyle = 'rgba(0,0,0,.18)'; rr(-15, -15, 32, 32, 7); ctx.fill();
+  ctx.fillStyle = C.ink; ctx.fillRect(-15, -18, 30, 6); ctx.fillRect(-15, 12, 30, 6);
+  ctx.fillStyle = S.alive ? C.robot : C.muted; ctx.strokeStyle = C.ink; ctx.lineWidth = 2;
+  rr(-13, -13, 26, 26, 6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = C.ink; rr(4, -9, 7, 18, 2); ctx.fill();
+  const eye = !S.alive ? C.muted : crit && Math.floor(S.t * 4) % 2 ? C.crit : (R.dir === 'EVADE' ? C.warn : R.charging ? C.charge : C.ok);
+  ctx.fillStyle = eye; ctx.beginPath(); ctx.arc(8, -4.5, 2.2, 0, 7); ctx.arc(8, 4.5, 2.2, 0, 7); ctx.fill();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(-12, 0); ctx.stroke();
+  ctx.restore();
+  // battery tick above
+  if (S.alive) {
+    ctx.fillStyle = hexA(C.ink, .6); ctx.fillRect(R.x - 16, R.y - 28, 32, 4);
+    ctx.fillStyle = R.battery < 25 ? C.crit : R.battery < 50 ? C.warn : C.ok; ctx.fillRect(R.x - 16, R.y - 28, 32 * R.battery / 100, 4);
+  }
+}
+
+function drawGhost(x, y) {
+  ctx.globalAlpha = .45; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+  const tool = S.tool;
+  const col = { drone: C.drone, acid: C.acid, vent: C.heat, charger: C.charge, kit: C.repair, erase: C.fg }[tool];
+  ctx.strokeStyle = col; ctx.beginPath();
+  const r = { drone: 14, acid: 46, vent: 85, charger: 22, kit: 12, erase: 40 }[tool];
+  ctx.arc(x, y, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+}
+
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function hexA(hex, a) {
+  if (!hex || hex[0] !== '#') return hex || 'transparent';
+  let h = hex.slice(1); if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const n = parseInt(h, 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+}
+
+/* ---------- panel ---------- */
+const driveEls = {};
+(function buildDrives() {
+  const box = $('drives');
+  for (const k of DRIVE_KEYS) {
+    const row = document.createElement('div'); row.className = 'drive';
+    row.innerHTML = `<span>${LABELS[k]}</span><div class="bar"><i></i></div><span class="n">0.00</span>`;
+    box.append(row); driveEls[k] = row;
+  }
+})();
+function lvlColor(v, warnAt, critAt, invert) {
+  if (invert) return v >= critAt ? 'var(--crit)' : v >= warnAt ? 'var(--warn)' : 'var(--ok)';
+  return v <= critAt ? 'var(--crit)' : v <= warnAt ? 'var(--warn)' : 'var(--ok)';
+}
+function renderPanel() {
+  const b = R.battery, h = R.hull, tc = R.temp;
+  $('mBatt').style.width = b + '%'; $('mBatt').style.background = lvlColor(b, 45, 20);
+  $('mHull').style.width = h + '%'; $('mHull').style.background = lvlColor(h, 50, 25);
+  const tp = clamp((tc - 20) / 90 * 100, 0, 100);
+  $('mTemp').style.width = tp + '%'; $('mTemp').style.background = lvlColor(tc, 60, 85, true);
+  $('vBatt').textContent = Math.round(b) + '%'; $('vHull').textContent = Math.round(h) + '%'; $('vTemp').textContent = Math.round(tc) + '°C';
+  const dr = drainRate();
+  $('endurance').textContent = S.alive
+    ? (R.charging ? `Charging +${(16 - dr).toFixed(1)} %/s · full in ${Math.ceil((100 - b) / Math.max(.1, 16 - dr))} s` : `Draw ${dr.toFixed(1)} %/s · endurance ${fmt(b / dr)} at this pace`)
+    : 'No power draw';
+  $('docked').textContent = R.charging && S.alive ? 'Docked' : '';
+  $('dir').textContent = S.alive ? LABELS[R.dir] : 'Offline';
+  $('dir').style.color = !S.alive ? 'var(--crit)' : R.dir === 'EVADE' ? 'var(--warn)' : R.dir === 'WANDER' ? 'var(--crit)' : 'var(--fg)';
+  $('reason').textContent = S.alive ? R.reason : (R.cause || 'Battery depleted') + '. Waiting for reboot.';
+  const active = R.dir === 'DOCKED' ? 'CHARGE' : R.dir;
+  for (const k of DRIVE_KEYS) {
+    const v = S.drives[k] || 0, row = driveEls[k];
+    row.classList.toggle('on', k === active && S.alive);
+    row.querySelector('i').style.width = clamp(v / 2, 0, 1) * 100 + '%';
+    row.querySelector('i').style.background = k === active ? 'var(--fg)' : 'var(--muted)';
+    row.querySelector('.n').textContent = v.toFixed(2);
+  }
+  const up = S.alive ? S.t - R.born : 0;
+  $('uptime').textContent = fmt(up);
+  $('best').textContent = fmt(Math.max(S.best, up));
+  $('deaths').textContent = S.deaths;
+  const st = $('status');
+  const crit = b < 20 || h < 25 || tc > 80;
+  st.className = 'pill ' + (!S.alive ? 'crit' : crit ? 'warn' : 'ok');
+  st.textContent = !S.alive ? 'Offline' : crit ? 'Critical' : 'Operational';
+  if (!S.alive) $('rebootIn').textContent = Math.ceil(S.offlineT);
+}
+
+/* ---------- input ---------- */
+function toWorld(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
+cv.addEventListener('pointermove', e => { pointer = toWorld(e); });
+cv.addEventListener('pointerleave', () => { pointer = null; });
+cv.addEventListener('pointerdown', e => {
+  const p = toWorld(e);
+  const name = { drone: 'Drone', acid: 'Acid pool', vent: 'Heat vent', charger: 'Charger', kit: 'Repair kit' };
+  switch (S.tool) {
+    case 'drone': if (S.drones.length < 12) S.drones.push(newDrone(p.x, p.y)); break;
+    case 'acid': if (S.acid.length < 14) S.acid.push({ x: p.x, y: p.y, r: rnd(36, 54) }); break;
+    case 'vent': if (S.vents.length < 6) S.vents.push({ x: p.x, y: p.y, r: 85 }); break;
+    case 'charger': if (S.chargers.length < 6) S.chargers.push({ x: p.x, y: p.y }); break;
+    case 'kit': if (S.kits.length < 6) S.kits.push({ x: p.x, y: p.y, ph: 0 }); break;
+    case 'erase': {
+      let best = null, bd = 50, arr = null;
+      for (const list of [S.drones, S.acid, S.vents, S.chargers, S.kits]) for (const o of list) { const d = dist(o, p) - (o.r ? Math.min(o.r, 40) : 0); if (d < bd) { bd = d; best = o; arr = list; } }
+      if (best) { arr.splice(arr.indexOf(best), 1); addLog('Item removed from chamber.'); }
+      return;
+    }
+  }
+  addLog(`${name[S.tool]} placed at (${Math.round(p.x)}, ${Math.round(p.y)}).`);
+  R.thinkT = 0;
+});
+document.querySelectorAll('#tools button').forEach(b => b.addEventListener('click', () => {
+  S.tool = b.dataset.tool;
+  document.querySelectorAll('#tools button').forEach(x => x.setAttribute('aria-pressed', x === b));
+}));
+document.querySelectorAll('#speeds button').forEach(b => b.addEventListener('click', () => {
+  S.speed = +b.dataset.speed;
+  document.querySelectorAll('#speeds button').forEach(x => x.setAttribute('aria-pressed', x === b));
+}));
+$('instinct').addEventListener('change', e => {
+  S.instinct = e.target.checked; R.thinkT = 0; R.wp = null;
+  if (S.instinct) addLog('Self-preservation re-enabled.', 'good');
+});
+$('caution').addEventListener('input', e => {
+  S.caution = +e.target.value;
+  $('cautionLbl').textContent = S.caution < .8 ? 'Bold: cuts close to hazards' : S.caution > 1.4 ? 'Timid: wide berth, more detours' : 'Balanced';
+});
+$('reboot').addEventListener('click', reboot);
+$('reset').addEventListener('click', () => { seed(); S.log = []; reboot(); });
+$('clear').addEventListener('click', () => { S.acid = []; S.vents = []; S.drones = []; addLog('Hazards cleared.'); R.thinkT = 0; });
+
+/* ---------- loop ---------- */
+let last = performance.now(), panelT = 0;
+addLog('Unit-7 online. Battery 72%, hull 88%.', 'good');
+function frame(now) {
+  const real = Math.min(.05, (now - last) / 1000); last = now;
+  for (let i = 0; i < S.speed; i++) {
+    S.t += real;
+    if (S.alive) updateRobot(real);
+    updateDrones(real);
+  }
+  if (!S.alive) { S.offlineT -= real * S.speed; if (S.offlineT <= 0) reboot(); }
+  draw();
+  panelT -= real;
+  if (panelT <= 0) { renderPanel(); panelT = .1; }
+  requestAnimationFrame(frame);
+}
+renderPanel();
+requestAnimationFrame(frame);
+})();
+</script>
+
+</html>
