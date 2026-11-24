@@ -90,7 +90,7 @@ aside { display: grid; gap: 14px; min-width: 0; }
 .directive { font-family: var(--display); font-size: 30px; font-weight: 800; line-height: 1; letter-spacing: .03em; text-transform: uppercase; }
 .reason { margin: 0; min-height: 2.9em; }
 .drives { display: grid; gap: 5px; }
-.drive { display: grid; grid-template-columns: 62px minmax(0,1fr) 34px; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.drive { display: grid; grid-template-columns: 62px minmax(0,1fr) 40px; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
 .drive .bar { height: 6px; }
 .drive.on { color: var(--fg); font-weight: 600; }
 .drive .n { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
@@ -110,6 +110,8 @@ input[type=range] { width: 150px; accent-color: var(--fg); }
 .btn { font: 600 13px var(--body); padding: 8px 12px; background: var(--fg); color: var(--panel); border: 0; border-radius: 4px; cursor: pointer; }
 .btn.ghost { background: none; color: var(--fg); border: 1.5px solid var(--line); }
 .small { font-size: 12px; color: var(--muted); }
+#spark { aspect-ratio: 312 / 70; cursor: default; background: var(--floor); border: 1px solid var(--line); }
+.btn:disabled { opacity: .6; cursor: progress; }
 @media (prefers-reduced-motion: reduce) { .bar i, .switch, .switch::after { transition: none; } }
 </style>
 
@@ -171,11 +173,33 @@ input[type=range] { width: 150px; accent-color: var(--fg); }
         <div class="drives" id="drives"></div>
       </div>
 
+      <div class="card">
+        <h3>Learning <span id="qStates"></span></h3>
+        <div class="readouts">
+          <div class="ro"><small>Episodes</small><b id="qEp">0</b></div>
+          <div class="ro"><small>Explore ε</small><b id="qEps">0.50</b></div>
+          <div class="ro"><small>Avg last 20</small><b id="qAvg">—</b></div>
+        </div>
+        <canvas id="spark" width="312" height="70" aria-label="Uptime of each learning episode"></canvas>
+        <p class="small">Each line is one life. Faint: uptime per episode. Solid: 10-episode average. With the brain set to Learned, the drive bars show its Q-values.</p>
+        <div class="row">
+          <button class="btn" id="train">Train 4 hours</button>
+          <button class="btn ghost" id="forget">Forget everything</button>
+        </div>
+      </div>
+
       <div class="card controls">
         <h3>Instincts</h3>
         <div class="row">
           <label for="instinct"><b>Self-preservation</b><br><span class="small">Off: it ignores hazards and never recharges</span></label>
           <input type="checkbox" class="switch" id="instinct" checked>
+        </div>
+        <div class="row">
+          <span><b>Brain</b><br><span class="small" id="brainLbl">Hand-written rules</span></span>
+          <div class="seg" id="brains" role="group" aria-label="Decision maker">
+            <button data-brain="rules" aria-pressed="true">Rules</button>
+            <button data-brain="q" aria-pressed="false">Learned</button>
+          </div>
         </div>
         <div class="row">
           <label for="caution"><b>Caution</b><br><span class="small" id="cautionLbl">Balanced</span></label>
@@ -236,7 +260,8 @@ window.addEventListener('resize', sizeCanvas);
 
 /* ---------- state ---------- */
 const S = { t: 0, alive: true, deaths: 0, best: 0, instinct: true, caution: 1, speed: 1, tool: 'drone',
-  acid: [], vents: [], drones: [], chargers: [], kits: [], log: [], drives: {}, offlineT: 0 };
+  acid: [], vents: [], drones: [], chargers: [], kits: [], kitTimers: [], log: [], drives: {}, offlineT: 0,
+  brain: 'rules', training: false };
 try { S.best = +localStorage.getItem('unit7-best') || 0; } catch (e) {}
 
 function newRobot() {
@@ -251,7 +276,7 @@ function seed() {
   S.vents = [{ x: 720, y: 360, r: 85 }];
   S.chargers = [{ x: 80, y: 80 }, { x: 820, y: 490 }];
   S.drones = [newDrone(280, 170), newDrone(600, 470)];
-  S.kits = [];
+  S.kits = []; S.kitTimers = [];
   spawnKit();
 }
 function spawnKit() {
@@ -272,6 +297,7 @@ seed();
 
 /* ---------- log ---------- */
 function addLog(text, kind = '') {
+  if (S.training) return;
   S.log.unshift({ t: S.t - R.born, text, kind });
   if (S.log.length > 60) S.log.pop();
   renderLog();
@@ -324,6 +350,97 @@ function safeSpot(scoreFn) {
 const LABELS = { EVADE: 'Evade', CHARGE: 'Recharge', REPAIR: 'Repair', COOL: 'Cool down', EXPLORE: 'Explore', DOCKED: 'Charging', WANDER: 'Wander' };
 const DRIVE_KEYS = ['EVADE', 'CHARGE', 'REPAIR', 'COOL', 'EXPLORE'];
 
+/* ---------- learned brain: tabular Q-learning ----------
+   The rules brain scores directives with hand-tuned formulas. The learned brain
+   starts knowing nothing. It keeps a table Q[state][action] meaning "how much
+   future reward do I expect if I pick this directive in this situation?"
+   Every 0.25 s it looks up the row for the current situation and usually picks
+   the best-rated action (exploit), but with probability ε picks a random one
+   (explore). Once it sees where that choice led, it nudges the old estimate:
+
+       Q[s][a] += α · (reward + γ · max Q[s', ·] − Q[s][a])
+
+   That line is the whole learning rule. Everything else is bookkeeping.
+   Things to try: change the rewards below, add a state feature, or swap the
+   table for a small neural network (that is a DQN). */
+const QL_CFG = {
+  alpha: .1,        // learning rate: how far each update moves the estimate
+  gamma: .99,       // discount per 0.25 s step. .97 was too short-sighted to see a flat battery coming
+  epsStart: .5, epsMin: .03, epsDecay: 5000,  // exploration fades over ~5000 decisions
+  rAlive: 1,        // reward per second survived
+  rHull: .1,        // reward per % hull gained (negative when damaged)
+  rBatt: .02,       // reward per % battery gained (small hint that charging is good)
+  rDeath: -20,      // penalty for going offline
+};
+const N_ACTIONS = DRIVE_KEYS.length;
+const N_STATES = 4 * 3 * 3 * 3 * 2;  // battery × hull × temp × drone × docked
+const QL = { q: new Float32Array(N_STATES * N_ACTIONS), n: new Uint32Array(N_STATES),
+  episodes: 0, decisions: 0, hist: [], prev: null, why: '', show: null };
+
+// Squash the continuous world into one of 216 situations the table can index.
+function qState(dn) {
+  const b = R.battery < 20 ? 0 : R.battery < 45 ? 1 : R.battery < 75 ? 2 : 3;
+  const h = R.hull < 35 ? 0 : R.hull < 70 ? 1 : 2;
+  const t = R.temp < 50 ? 0 : R.temp < 70 ? 1 : 2;
+  const d = dn > 220 ? 0 : dn > 110 ? 1 : 2;
+  const c = R.charging ? 1 : 0;
+  return (((b * 3 + h) * 3 + t) * 3 + d) * 2 + c;
+}
+const qEps = () => Math.max(QL_CFG.epsMin, QL_CFG.epsStart * Math.exp(-QL.decisions / QL_CFG.epsDecay));
+// Reward earned since the previous decision.
+function qReward() {
+  const p = QL.prev;
+  return (S.t - p.t) * QL_CFG.rAlive + (R.hull - p.hull) * QL_CFG.rHull + (R.battery - p.batt) * QL_CFG.rBatt;
+}
+function qBest(s, avail) {
+  let a = -1, v = -Infinity;
+  for (let i = 0; i < N_ACTIONS; i++) if (avail[i] && QL.q[s * N_ACTIONS + i] > v) { v = QL.q[s * N_ACTIONS + i]; a = i; }
+  return [a, v];
+}
+// avail[i] is false when an action is impossible (no drone to evade, no charger, no kit).
+function qChoose(avail, dn) {
+  const s = qState(dn);
+  if (QL.prev) {  // learn from the last decision now that we can see where it led
+    const i = QL.prev.s * N_ACTIONS + QL.prev.a;
+    const target = qReward() + QL_CFG.gamma * qBest(s, avail)[1];
+    QL.q[i] += QL_CFG.alpha * (target - QL.q[i]);
+  }
+  const eps = qEps(), [best, bv] = qBest(s, avail);
+  let a, why;
+  if (Math.random() < eps || !QL.n[s]) {
+    const opts = []; avail.forEach((ok, i) => ok && opts.push(i));
+    a = opts[Math.floor(Math.random() * opts.length)];
+    why = QL.n[s] ? `Exploring: trying ${LABELS[DRIVE_KEYS[a]]} at random (ε ${eps.toFixed(2)}).` : 'Never seen this situation. Guessing.';
+  } else {
+    a = best; why = `Q-table rates ${LABELS[DRIVE_KEYS[a]]} highest here (${bv.toFixed(1)}).`;
+  }
+  QL.n[s]++; QL.decisions++;
+  QL.prev = { s, a, t: S.t, hull: R.hull, batt: R.battery };
+  QL.show = Array.from(QL.q.subarray(s * N_ACTIONS, (s + 1) * N_ACTIONS));
+  QL.why = why;
+  return DRIVE_KEYS[a];
+}
+// Death ends the episode: no future to bootstrap from, just the penalty.
+function qTerminal(uptime) {
+  if (!QL.prev) return;
+  const i = QL.prev.s * N_ACTIONS + QL.prev.a;
+  QL.q[i] += QL_CFG.alpha * (qReward() + QL_CFG.rDeath - QL.q[i]);
+  QL.prev = null; QL.episodes++;
+  QL.hist.push(uptime); if (QL.hist.length > 300) QL.hist.shift();
+  if (!S.training && QL.episodes % 5 === 0) qSave();
+}
+function qSave() {
+  try { localStorage.setItem('unit7-q', JSON.stringify({ q: Array.from(QL.q), n: Array.from(QL.n), episodes: QL.episodes, decisions: QL.decisions, hist: QL.hist })); } catch (e) {}
+}
+function qLoad() {
+  try {
+    const d = JSON.parse(localStorage.getItem('unit7-q'));
+    if (!d || d.q.length !== QL.q.length) return;
+    QL.q.set(d.q); QL.n.set(d.n); QL.episodes = d.episodes; QL.decisions = d.decisions; QL.hist = d.hist || [];
+  } catch (e) {}
+}
+qLoad();
+
 function think() {
   const prev = R.dir;
   if (!S.instinct) {
@@ -362,11 +479,18 @@ function think() {
   const explore = .2;
 
   S.drives = { EVADE: evade, CHARGE: charge, REPAIR: repair, COOL: cool, EXPLORE: explore };
-  let pick = 'EXPLORE', ps = -1;
-  for (const k of DRIVE_KEYS) if (S.drives[k] > ps) { ps = S.drives[k]; pick = k; }
-  // hysteresis: stay on current plan unless a new one is clearly better (evading always wins quickly)
-  const cur = prev === 'DOCKED' ? 'CHARGE' : prev;
-  if (pick !== cur && pick !== 'EVADE' && S.drives[cur] !== undefined && S.drives[cur] > ps - .12) pick = cur;
+  let pick = 'EXPLORE';
+  if (S.brain === 'q') {
+    pick = qChoose([!!nd, !!ch, !!kit, true, true], dn);
+  } else {
+    let ps = -1;
+    for (const k of DRIVE_KEYS) if (S.drives[k] > ps) { ps = S.drives[k]; pick = k; }
+    // hysteresis: stay on current plan unless a new one is clearly better (evading always wins quickly)
+    const cur = prev === 'DOCKED' ? 'CHARGE' : prev;
+    if (pick !== cur && pick !== 'EVADE' && S.drives[cur] !== undefined && S.drives[cur] > ps - .12) pick = cur;
+  }
+  // never act on something that is not in the chamber
+  if ((pick === 'EVADE' && !nd) || (pick === 'CHARGE' && !ch) || (pick === 'REPAIR' && !kit)) pick = 'EXPLORE';
 
   const b = Math.round(R.battery), h = Math.round(R.hull), tc = Math.round(R.temp);
   switch (pick) {
@@ -398,6 +522,7 @@ function think() {
       R.target = R.wp; R.dir = 'EXPLORE';
       R.reason = 'Vitals stable. Patrolling low-risk ground at 55% speed to save power.';
   }
+  if (S.brain === 'q') R.reason = QL.why;
   if (R.dir !== prev) {
     const kind = R.dir === 'EVADE' ? 'warn' : R.dir === 'DOCKED' ? 'good' : '';
     const why = { EVADE: `drone at ${Math.round(dn)} px`, CHARGE: `battery ${b}%`, DOCKED: `charging from ${b}%`, REPAIR: `hull ${h}%`, COOL: `core ${tc}°C`, EXPLORE: 'all vitals in range' }[R.dir];
@@ -485,7 +610,7 @@ function updateRobot(dt) {
     if (dist(R, S.kits[i]) < 22) {
       const before = R.hull; R.hull = Math.min(100, R.hull + 40);
       addLog(`Repair kit used. Hull ${Math.round(before)}% → ${Math.round(R.hull)}%`, 'good');
-      S.kits.splice(i, 1); setTimeout(() => { if (S.kits.length < 3) spawnKit(); }, 9000);
+      S.kits.splice(i, 1); S.kitTimers.push(S.t + 9);  // sim time, so fast training respawns kits too
     }
   }
   R.battery = clamp(R.battery, 0, 100); R.hull = clamp(R.hull, 0, 100);
@@ -517,9 +642,21 @@ function updateDrones(dt) {
   }
 }
 
+function step(dt) {
+  S.t += dt;
+  if (S.alive) updateRobot(dt);
+  updateDrones(dt);
+  for (let i = S.kitTimers.length - 1; i >= 0; i--) {
+    if (S.t >= S.kitTimers[i]) { S.kitTimers.splice(i, 1); if (S.kits.length < 3) spawnKit(); }
+  }
+}
+
 function die(cause) {
-  S.alive = false; S.deaths++; S.offlineT = 4;
   const up = S.t - R.born;
+  qTerminal(up);
+  S.alive = false;
+  if (S.training) return;  // the trainer reboots instantly
+  S.deaths++; S.offlineT = 4;
   if (up > S.best) { S.best = up; try { localStorage.setItem('unit7-best', String(up)); } catch (e) {} }
   addLog(`OFFLINE. ${cause} after ${fmt(up)}.`, 'crit');
   $('offlineWhy').textContent = cause + '.';
@@ -687,13 +824,17 @@ function renderPanel() {
   $('dir').style.color = !S.alive ? 'var(--crit)' : R.dir === 'EVADE' ? 'var(--warn)' : R.dir === 'WANDER' ? 'var(--crit)' : 'var(--fg)';
   $('reason').textContent = S.alive ? R.reason : (R.cause || 'Battery depleted') + '. Waiting for reboot.';
   const active = R.dir === 'DOCKED' ? 'CHARGE' : R.dir;
-  for (const k of DRIVE_KEYS) {
-    const v = S.drives[k] || 0, row = driveEls[k];
+  // learned brain: bars show this situation's Q-values, scaled lowest to highest
+  const qv = S.brain === 'q' && S.instinct && QL.show;
+  const lo = qv ? Math.min(...qv) : 0, hi = qv ? Math.max(...qv) : 1;
+  DRIVE_KEYS.forEach((k, i) => {
+    const v = qv ? qv[i] : (S.drives[k] || 0), row = driveEls[k];
     row.classList.toggle('on', k === active && S.alive);
-    row.querySelector('i').style.width = clamp(v / 2, 0, 1) * 100 + '%';
+    row.querySelector('i').style.width = (qv ? (hi > lo ? (v - lo) / (hi - lo) : 0) : clamp(v / 2, 0, 1)) * 100 + '%';
     row.querySelector('i').style.background = k === active ? 'var(--fg)' : 'var(--muted)';
-    row.querySelector('.n').textContent = v.toFixed(2);
-  }
+    row.querySelector('.n').textContent = v.toFixed(qv ? 1 : 2);
+  });
+  renderLearn();
   const up = S.alive ? S.t - R.born : 0;
   $('uptime').textContent = fmt(up);
   $('best').textContent = fmt(Math.max(S.best, up));
@@ -703,6 +844,53 @@ function renderPanel() {
   st.className = 'pill ' + (!S.alive ? 'crit' : crit ? 'warn' : 'ok');
   st.textContent = !S.alive ? 'Offline' : crit ? 'Critical' : 'Operational';
   if (!S.alive) $('rebootIn').textContent = Math.ceil(S.offlineT);
+}
+
+/* ---------- learning panel ---------- */
+const sp = $('spark'), spx = sp.getContext('2d');
+(function sizeSpark() { const dpr = Math.min(2, window.devicePixelRatio || 1); sp.width = 312 * dpr; sp.height = 70 * dpr; spx.setTransform(dpr, 0, 0, dpr, 0, 0); })();
+function renderLearn() {
+  const h = QL.hist, last = h.slice(-20);
+  $('qEp').textContent = QL.episodes;
+  $('qEps').textContent = qEps().toFixed(2);
+  $('qAvg').textContent = last.length ? fmt(last.reduce((a, b) => a + b, 0) / last.length) : '—';
+  let seen = 0; for (const n of QL.n) if (n) seen++;
+  $('qStates').textContent = `${seen}/${N_STATES} situations seen`;
+  const w = 312, ht = 70, show = h.slice(-120);
+  spx.clearRect(0, 0, w, ht);
+  if (show.length < 2) { spx.fillStyle = C.muted; spx.font = '11px "IBM Plex Sans", sans-serif'; spx.fillText('No episodes yet. Train or switch to Learned.', 8, 38); return; }
+  const max = Math.max(...show) * 1.1, x = i => 4 + i / (show.length - 1) * (w - 8), y = v => ht - 4 - v / max * (ht - 16);
+  spx.strokeStyle = hexA(C.muted, .55); spx.lineWidth = 1; spx.beginPath();
+  show.forEach((v, i) => i ? spx.lineTo(x(i), y(v)) : spx.moveTo(x(i), y(v))); spx.stroke();
+  spx.strokeStyle = C.fg; spx.lineWidth = 2; spx.beginPath();
+  show.forEach((_, i) => { const win = show.slice(Math.max(0, i - 9), i + 1), m = win.reduce((a, b) => a + b, 0) / win.length; i ? spx.lineTo(x(i), y(m)) : spx.moveTo(x(i), y(m)); });
+  spx.stroke();
+  spx.fillStyle = C.muted; spx.font = '10px "IBM Plex Mono", monospace'; spx.fillText('max ' + fmt(max / 1.1), 6, 11);
+}
+
+function setBrain(b) {
+  S.brain = b; QL.prev = null; R.thinkT = 0;
+  document.querySelectorAll('#brains button').forEach(x => x.setAttribute('aria-pressed', x.dataset.brain === b));
+  $('brainLbl').textContent = b === 'q' ? 'Q-table, learns from every life' : 'Hand-written rules';
+}
+// Run the sim headless as fast as the CPU allows, in chunks so the page stays responsive.
+function train(simMinutes) {
+  if (S.training) return;
+  setBrain('q'); S.instinct = true; $('instinct').checked = true;
+  if (!S.alive) reboot();
+  S.training = true;
+  const DT = 1 / 30, total = Math.round(simMinutes * 60 / DT), btn = $('train'), ep0 = QL.episodes;
+  let done = 0; btn.disabled = true;
+  (function chunk() {
+    const end = Math.min(total, done + 3000);
+    for (; done < end; done++) { step(DT); if (!S.alive) reboot(); }
+    btn.textContent = `Training… ${Math.round(done / total * 100)}%`;
+    renderLearn();
+    if (done < total) { setTimeout(chunk, 0); return; }
+    S.training = false; btn.disabled = false; btn.textContent = 'Train 4 hours'; qSave();
+    reboot();
+    addLog(`Trained ${simMinutes} sim-minutes over ${QL.episodes - ep0} lives. Now watching the learned brain.`, 'good');
+  })();
 }
 
 /* ---------- input ---------- */
@@ -744,6 +932,13 @@ $('caution').addEventListener('input', e => {
   S.caution = +e.target.value;
   $('cautionLbl').textContent = S.caution < .8 ? 'Bold: cuts close to hazards' : S.caution > 1.4 ? 'Timid: wide berth, more detours' : 'Balanced';
 });
+document.querySelectorAll('#brains button').forEach(b => b.addEventListener('click', () => setBrain(b.dataset.brain)));
+$('train').addEventListener('click', () => train(240));
+$('forget').addEventListener('click', () => {
+  QL.q.fill(0); QL.n.fill(0); QL.episodes = 0; QL.decisions = 0; QL.hist = []; QL.prev = null; QL.show = null;
+  try { localStorage.removeItem('unit7-q'); } catch (e) {}
+  addLog('Learned brain wiped. Back to knowing nothing.', 'warn'); renderLearn();
+});
 $('reboot').addEventListener('click', reboot);
 $('reset').addEventListener('click', () => { seed(); S.log = []; reboot(); });
 $('clear').addEventListener('click', () => { S.acid = []; S.vents = []; S.drones = []; addLog('Hazards cleared.'); R.thinkT = 0; });
@@ -753,12 +948,8 @@ let last = performance.now(), panelT = 0;
 addLog('Unit-7 online. Battery 72%, hull 88%.', 'good');
 function frame(now) {
   const real = Math.min(.05, (now - last) / 1000); last = now;
-  for (let i = 0; i < S.speed; i++) {
-    S.t += real;
-    if (S.alive) updateRobot(real);
-    updateDrones(real);
-  }
-  if (!S.alive) { S.offlineT -= real * S.speed; if (S.offlineT <= 0) reboot(); }
+  if (!S.training) for (let i = 0; i < S.speed; i++) step(real);
+  if (!S.alive && !S.training) { S.offlineT -= real * S.speed; if (S.offlineT <= 0) reboot(); }
   draw();
   panelT -= real;
   if (panelT <= 0) { renderPanel(); panelT = .1; }
@@ -766,6 +957,8 @@ function frame(now) {
 }
 renderPanel();
 requestAnimationFrame(frame);
+// For experiments in the browser console, e.g. unit7.QL_CFG.rDeath = -50
+window.unit7 = { S, QL, QL_CFG, step, reboot, setBrain, train, get robot() { return R; } };
 })();
 </script>
 
